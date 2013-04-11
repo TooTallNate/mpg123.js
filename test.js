@@ -123,7 +123,8 @@ process.stdin.on('data', function (buf) {
       done = Module.getValue(donePtr, 'i32');
       console.error('decoded %s bytes!', done);
 
-      var b = pointerToBuf(outPtr, done);
+      var out = Module.HEAPU8.subarray(outPtr, outPtr + done);
+      var b = new Buffer(out);
       //console.error(b);
       process.stdout.write(b);
       //ws.write(b);
@@ -153,9 +154,4 @@ function close () {
 
   // exit
   mpg123_exit();
-}
-
-function pointerToBuf (ptr, len) {
-  var out = Module.HEAPU8.subarray(ptr, ptr + len);
-  return new Buffer(out);
 }
