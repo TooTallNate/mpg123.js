@@ -18,6 +18,11 @@
       var MPG123_NEED_MORE = -10;
       var MPG123_ERR = -1;
       var MPG123_OK = 0;
+      // enum mpg123_channelcount
+      var MPG123_MONO = 1;
+      var MPG123_STEREO = 2;
+      //
+      var MPG123_ENC_FLOAT_32 = 0x200;
 
       // libc
       var malloc = Module.cwrap('malloc', 'number', ['number']);
@@ -36,6 +41,10 @@
       var mpg123_feed = Module.cwrap('mpg123_feed', 'number', ['number', 'number', 'number']);
 
       var mpg123_getformat = Module.cwrap('mpg123_getformat', 'number', ['number', 'number', 'number']);
+
+      var mpg123_format_none = Module.cwrap('mpg123_format_none', 'number', ['number']);
+      var mpg123_format = Module.cwrap('mpg123_format', 'number', ['number', 'number', 'number', 'number']);
+      var mpg123_rates = Module.cwrap('mpg123_rates', 'void', ['number', 'number']);
 
 
 
@@ -67,7 +76,23 @@
         decodersPtr += 4;
         decoders.push(Module.Pointer_stringify(decoder));
       }
-      console.error(decoders);
+      console.error('supported decoders:', decoders);
+
+
+      // get an array of the "sample rates"
+      var ratesListPtrPtr = malloc(8);
+      var numberPtr = malloc(8);
+      mpg123_rates(ratesListPtrPtr, numberPtr);
+      var number = Module.getValue(numberPtr, 'i32');
+      var rates = [];
+      var ratesListPtr = Module.getValue(ratesListPtrPtr, 'i32');
+      for (var i = 0; i < number; i++) {
+        var cur = Module.getValue(ratesListPtr, 'i32');
+        rates.push(cur);
+        ratesListPtr += 4;
+      }
+      console.error('rates:', rates);
+      //var number = Module.getValue(numberPtr, 'i32');
 
 
       // create an mpg123 decoder handle
@@ -75,6 +100,11 @@
       var mh = mpg123_new(0, errorPtr);
       var error = Module.getValue(errorPtr, 'i32');
       //assert.equal(0, error, 'mpg123_new() failed: ' + error);
+      // ask for "float" output only
+      r = mpg123_format_none(mh);
+      rates.forEach(function(rate){
+        r = mpg123_format(mh, rate, MPG123_MONO | MPG123_STEREO, MPG123_ENC_FLOAT_32);
+      });
 
       // open the "feed" - tell mpg123 that we're going to feed to buffers manually
       r = mpg123_open_feed(mh);
@@ -123,11 +153,19 @@
             var rate = Module.getValue(ratePtr, 'i32');
             var channels = Module.getValue(channelsPtr, 'i32');
             var encoding = Module.getValue(encodingPtr, 'i32');
-            console.error('new format:', {
+            console.log('new format:', {
               rate: rate,
               channels: channels,
               encoding: encoding
             });
+            function oncheck (num_bytes) {
+              console.log('oncheck', arguments);
+              return [];
+            }
+            function onerror () {
+              console.log('onerror', arguments);
+            }
+            audioHandle = new XAudioServer(channels, rate, rate >> 2, 1024 * 1024, oncheck, 1, onerror);
 
             continue;
           } else if (MPG123_OK == r) {
@@ -135,7 +173,29 @@
             done = Module.getValue(donePtr, 'i32');
             console.error('decoded %s bytes!', done);
 
-            var out = Module.HEAPU8.subarray(outPtr, outPtr + done);
+            //var out = Module.HEAPU8.subarray(outPtr, outPtr + done);
+            var floatSamples = new Float32Array(Module.HEAPU8.buffer, outPtr, done / 4 /* sizeof float */);
+            console.log(floatSamples.length);
+
+            // convert to float32 samples
+            /*
+            var intSamples = new Int16Array(out)
+              , o = new ArrayBuffer(intSamples.length * 4)
+              , floatSamples = new Float32Array(o)
+              , f
+              , val
+
+            for (var i = 0; i < intSamples.length; i++) {
+              f = intSamples[i];
+              val = (f + 0.5) / 32767.5;
+              console.log(i, f, ' = ', val);
+              floatSamples[i] = val;
+            }
+            */
+            //console.log(floatSamples);
+
+            audioHandle.writeAudio(floatSamples);
+
             //var b = new Buffer(out);
             //console.log(out);
             //process.stdout.write(b);
@@ -168,6 +228,7 @@
         //mpg123_exit();
       }
 
+      var audioHandle;
       var input = document.getElementsByTagName('input')[0];
       input.onchange = function (e) {
         var reader = new FileReader();
@@ -187,7 +248,7 @@
             i += chunkSize;
             processBuffer(cur);
             if (i < view.length) {
-              setTimeout(next, 0);
+              setTimeout(next, 100);
             }
           }
           next();
