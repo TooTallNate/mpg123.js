@@ -2,15 +2,17 @@
 <html>
   <head>
     <title></title>
-    <script type="text/javascript" src="XAudioJS/swfobject.js"></script>
-    <script type="text/javascript" src="XAudioJS/resampler.js"></script>
-    <script type="text/javascript" src="XAudioJS/XAudioServer.js"></script>
-    <script type="text/javascript" src="libmpg123.js"></script>
+    <script type="text/javascript" src="build/build.js"></script>
   </head>
   <body>
     <form action=""><input type="file" /></form>
+    <textarea id="log"></textarea>
     <script type="text/javascript">
-      //Module.TOTAL_MEMORY = 
+
+      var mpg123 = require('mpg123');
+      var Speaker = require('mpg123/deps/speaker'); // wtf tj?
+      var Readable = require('TooTallNate-cstreams').Readable; // wtf TJ?
+      var Transform = require('TooTallNate-cstreams-transform'); // wtf TJ?
 
       // libmpg123 constants
       var MPG123_DONE = -12;
@@ -55,14 +57,12 @@
       };
 
 
-
       // return value
       var r;
 
       // init
       r = mpg123_init();
       //assert.equal(0, r, 'mpg123_init() failed: ' + r);
-
 
       // get an array of the "supported decoders"
       var decodersPtr = mpg123_supported_decoders();
@@ -94,33 +94,50 @@
       console.error('rates:', rates);
       //var number = Module.getValue(numberPtr, 'i32');
 
+      /**
+       * mpg123 Decoder transform stream class. Feed it an MP3 file, it will
+       * output PCM audio data in Float32 format.
+       */
 
-      // create an mpg123 decoder handle
-      var errorPtr = malloc(sizeof.int);
-      var mh = mpg123_new(0, errorPtr);
-      var error = Module.getValue(errorPtr, 'i32');
-      //assert.equal(0, error, 'mpg123_new() failed: ' + error);
-      // ask for "float" output only
-      r = mpg123_format_none(mh);
-      rates.forEach(function(rate){
-        r = mpg123_format(mh, rate, MPG123_MONO | MPG123_STEREO, MPG123_ENC_FLOAT_32);
-      });
+      function Decoder () {
+        // create an mpg123 decoder handle
+        var errorPtr = malloc(sizeof.int);
+        var mh = mpg123_new(0, errorPtr);
+        var error = Module.getValue(errorPtr, 'i32');
+        free(errorPtr);
+        //assert.equal(0, error, 'mpg123_new() failed: ' + error);
 
-      // open the "feed" - tell mpg123 that we're going to feed to buffers manually
-      r = mpg123_open_feed(mh);
-      //assert.equal(0, r, 'mpg123_open_feed() failed: ' + r);
+        // store the mpg123_handle for this instance
+        this.mh = mh;
 
-      // upon `stdin` "data" events, invoke `mpg123_feed()` and `mpg123_read()`
-      function processBuffer (buf) {
-        console.error('process.stdin "data" event (%d bytes)', buf.length);
+        // ask for "float" output only
+        r = mpg123_format_none(mh);
+        rates.forEach(function(rate){
+          r = mpg123_format(mh, rate, MPG123_MONO | MPG123_STEREO, MPG123_ENC_FLOAT_32);
+        });
 
+        // open the "feed" - tell mpg123 that we're going to feed to buffers manually
+        r = mpg123_open_feed(mh);
+        //assert.equal(0, r, 'mpg123_open_feed() failed: ' + r);
+      }
+
+      Transform(Decoder.prototype);
+
+      Decoder.prototype._transform = function (buf, fn) {
+        // `buf` should be a Uint8Array instance instance
+        console.log('transforming %d bytes of MP3 data', buf.length);
+
+        var mh = this.mh;
+        var output = [];
+        var outputLength = 0;
+
+        // write the given Uint8Array into the C heap
         var bufPtr = malloc(buf.length);
         Module.writeArrayToMemory(buf, bufPtr);
 
-        // feed
+        // mpg123_feed()
         r = mpg123_feed(mh, bufPtr, buf.length);
         //assert.equal(0, r, 'mpg123_feed() failed: ' + r);
-        free(bufPtr);
 
         var donePtr = malloc(8 /* sizeof size_t */);
         var done;
@@ -129,8 +146,7 @@
         var outPtr = malloc(outLen);
 
         while (true) {
-          // read
-
+          // mpg123_read()
           r = mpg123_read(mh, outPtr, outLen, donePtr);
 
           if (MPG123_DONE == r) {
@@ -165,17 +181,16 @@
             function onerror () {
               console.log('onerror', arguments);
             }
-            audioHandle = new XAudioServer(channels, rate, rate >> 2, 1024 * 1024, oncheck, 1, onerror);
 
             continue;
           } else if (MPG123_OK == r) {
             // ok
             done = Module.getValue(donePtr, 'i32');
-            console.error('decoded %s bytes!', done);
+            //console.error('decoded %s bytes!', done);
 
             //var out = Module.HEAPU8.subarray(outPtr, outPtr + done);
             var floatSamples = new Float32Array(Module.HEAPU8.buffer, outPtr, done / 4 /* sizeof float */);
-            console.log(floatSamples.length);
+            //console.log(floatSamples.length);
 
             // convert to float32 samples
             /*
@@ -194,7 +209,10 @@
             */
             //console.log(floatSamples);
 
-            audioHandle.writeAudio(floatSamples);
+            // copy values so that `outPtr` can be reused...
+            output.push(new Float32Array(floatSamples));
+            outputLength += floatSamples.length;
+            //audioHandle.writeAudio(floatSamples);
 
             //var b = new Buffer(out);
             //console.log(out);
@@ -207,9 +225,22 @@
           }
         }
 
+        free(bufPtr);
         free(donePtr);
         free(outPtr);
-      }
+
+        // convert to a single Buffer :\ this is lame, Transform needs this.push()
+        var o = new Float32Array(outputLength);
+        var s = 0;
+        for (var i = 0; i < output.length; i++) {
+          var b = output[i];
+          for (var j = 0; j < b.length; j++) {
+            o[s++] = b[j];
+          }
+        }
+        console.log('%d samples of float data!', o.length);
+        fn(null, o);
+      };
 
       //process.stdin.on('end', function(){
       //  console.error('process.stdin "end" event');
@@ -228,9 +259,71 @@
         //mpg123_exit();
       }
 
-      var audioHandle;
+      /**
+       * Accepts a `File` instance and read the data as a Readable stream.
+       */
+
+      function FileReadable (file) {
+        this.file = file;
+        this.buffers = [];
+        this.position = 0;
+        this.chunkSize = 8192;
+
+        this.reader = new FileReader();
+        this.reader.onprogress = this.onprogress.bind(this);
+        this.reader.onload = this.reader.onprogress;
+        this.reader.readAsArrayBuffer(this.file);
+      }
+      Readable(FileReadable.prototype);
+
+      FileReadable.prototype.read = function (fn) {
+        if (this.buffers.length > 0) {
+          var buf = this.buffers.shift();
+          fn(null, buf);
+        } else {
+          // no buffers yet, need to wait...
+          this.readFn = fn;
+        }
+      };
+
+      // TODO: extract into cstream-push abstract stream module
+      FileReadable.prototype.push = function (buf) {
+        this.buffers.push(buf);
+        var fn = this.readFn;
+        if (fn) {
+          this.readFn = null;
+          // already a .read() call in progress, notify that a slice is ready
+          this.read(fn);
+        }
+      };
+
+      FileReadable.prototype.onprogress = function (e) {
+        console.log('reader "%s" event', e.type);
+        console.log('%s percent done', e.loaded / e.total * 100);
+
+        var buffer = e.target.result;
+        var len = e.loaded - this.position;
+        if (len > 0) {
+          while (this.position < e.loaded) {
+            var slice = new Uint8Array(buffer, this.position, Math.min(this.chunkSize, len));
+            this.position += slice.length;
+            len = e.loaded - this.position;
+            this.push(slice);
+          }
+        } else if (this.position === e.total) {
+          this.push(null); // push EOF
+        } else {
+          console.error('no bytes to push!');
+        }
+      };
+
+      /**
+       * Set up "change" event listener for the file <input>.
+       */
+
       var input = document.getElementsByTagName('input')[0];
       input.onchange = function (e) {
+        /*
         var reader = new FileReader();
         reader.onprogress = function (e) {
           console.log('reader.onprogress event', e);
@@ -256,9 +349,21 @@
           //close();
           //console.log(buf);
         };
+        */
         var file = e.target.files[0];
-        console.log('change event', file);
-        reader.readAsArrayBuffer(file);
+        console.log('<input> "change" event', file);
+
+        var reader = new FileReadable(file);
+        var decoder = new Decoder();
+        /*
+        reader.pipe(decoder);
+        decoder.read(function (err, chunk) {
+          if (err) throw err;
+          console.log('read %d byte "chunk"', chunk.length);
+        });
+        */
+        var speaker = new Speaker();
+        reader.pipe(decoder).pipe(speaker);
       };
     </script>
   </body>

@@ -1,0 +1,19 @@
+{
+  "name": "mpg123",
+  "repo": "TooTallNate/mpg123.js",
+  "description": "Decode MP3s in the browser using libmpg123 compiled with emscripten",
+  "version": "0.0.0",
+  "keywords": [],
+  "dependencies": {
+  },
+  "development": {
+    "TooTallNate/cstreams": "*",
+    "TooTallNate/cstreams-transform": "*",
+    "TooTallNate/speaker.js": "*"
+  },
+  "license": "MIT",
+  "scripts": [
+    "index.js",
+    "libmpg123.js"
+  ]
+}
