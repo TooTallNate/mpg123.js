@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
   <head>
-    <title></title>
+    <title>mpg123.js test page</title>
     <script type="text/javascript" src="build/build.js"></script>
   </head>
   <body>
@@ -124,121 +124,110 @@
 
       Decoder.prototype._transform = function (buf, fn) {
         // `buf` should be a Uint8Array instance instance
-        console.log('transforming %d bytes of MP3 data', buf.length);
+        if (buf) {
+          console.log('transforming %d bytes of MP3 data', buf.length);
 
-        var mh = this.mh;
-        var output = [];
-        var outputLength = 0;
+          var mh = this.mh;
+          var output = [];
+          var outputLength = 0;
 
-        // write the given Uint8Array into the C heap
-        var bufPtr = malloc(buf.length);
-        Module.writeArrayToMemory(buf, bufPtr);
+          // write the given Uint8Array into the C heap
+          var bufPtr = malloc(buf.length);
+          Module.writeArrayToMemory(buf, bufPtr);
 
-        // mpg123_feed()
-        r = mpg123_feed(mh, bufPtr, buf.length);
-        //assert.equal(0, r, 'mpg123_feed() failed: ' + r);
+          // mpg123_feed()
+          r = mpg123_feed(mh, bufPtr, buf.length);
+          //assert.equal(0, r, 'mpg123_feed() failed: ' + r);
 
-        var donePtr = malloc(8 /* sizeof size_t */);
-        var done;
+          var donePtr = malloc(8 /* sizeof size_t */);
+          var done;
 
-        var outLen = 8192;
-        var outPtr = malloc(outLen);
+          var outLen = 8192;
+          var outPtr = malloc(outLen);
 
-        while (true) {
-          // mpg123_read()
-          r = mpg123_read(mh, outPtr, outLen, donePtr);
+          while (true) {
+            // mpg123_read()
+            r = mpg123_read(mh, outPtr, outLen, donePtr);
 
-          if (MPG123_DONE == r) {
-            console.log('done!');
-            // mp3 is done
-            break;
-          } else if (MPG123_NEED_MORE == r) {
-            console.log('need more!');
-            // need more data!
-            break;
-          } else if (MPG123_NEW_FORMAT === r) {
-            // got a new format!
-            var ratePtr = malloc(8 /* sizeof long? */);
-            var channelsPtr = malloc(8 /* sizeof int */);
-            var encodingPtr = malloc(8 /* sizeof int */);
+            if (MPG123_DONE == r) {
+              console.log('done!');
+              // mp3 is done
+              break;
+            } else if (MPG123_NEED_MORE == r) {
+              console.log('need more!');
+              // need more data!
+              break;
+            } else if (MPG123_NEW_FORMAT === r) {
+              // got a new format!
+              var ratePtr = malloc(8 /* sizeof long? */);
+              var channelsPtr = malloc(8 /* sizeof int */);
+              var encodingPtr = malloc(8 /* sizeof int */);
 
-            r = mpg123_getformat(mh, ratePtr, channelsPtr, encodingPtr);
-            //assert.equal(0, r, 'mpg123_getformat() failed: ' + r);
+              r = mpg123_getformat(mh, ratePtr, channelsPtr, encodingPtr);
+              //assert.equal(0, r, 'mpg123_getformat() failed: ' + r);
 
-            var rate = Module.getValue(ratePtr, 'i32');
-            var channels = Module.getValue(channelsPtr, 'i32');
-            var encoding = Module.getValue(encodingPtr, 'i32');
-            console.log('new format:', {
-              rate: rate,
-              channels: channels,
-              encoding: encoding
-            });
-            function oncheck (num_bytes) {
-              console.log('oncheck', arguments);
-              return [];
+              var rate = Module.getValue(ratePtr, 'i32');
+              var channels = Module.getValue(channelsPtr, 'i32');
+              var encoding = Module.getValue(encodingPtr, 'i32');
+              console.log('new format:', {
+                rate: rate,
+                channels: channels,
+                encoding: encoding
+              });
+              function oncheck (num_bytes) {
+                console.log('oncheck', arguments);
+                return [];
+              }
+              function onerror () {
+                console.log('onerror', arguments);
+              }
+
+              continue;
+            } else if (MPG123_OK == r) {
+              // ok
+              done = Module.getValue(donePtr, 'i32');
+              //console.error('decoded %s bytes!', done);
+
+              //var out = Module.HEAPU8.subarray(outPtr, outPtr + done);
+              var floatSamples = new Float32Array(Module.HEAPU8.buffer, outPtr, done / 4 /* sizeof float */);
+              //console.log(floatSamples.length);
+
+              // copy values so that `outPtr` can be reused...
+              output.push(new Float32Array(floatSamples));
+              outputLength += floatSamples.length;
+              //audioHandle.writeAudio(floatSamples);
+
+              //var b = new Buffer(out);
+              //console.log(out);
+              //process.stdout.write(b);
+              //ws.write(b);
+
+            } else {
+              // fail
+              //assert(0, 'mpg123_read() failed: ' + r);
             }
-            function onerror () {
-              console.log('onerror', arguments);
-            }
-
-            continue;
-          } else if (MPG123_OK == r) {
-            // ok
-            done = Module.getValue(donePtr, 'i32');
-            //console.error('decoded %s bytes!', done);
-
-            //var out = Module.HEAPU8.subarray(outPtr, outPtr + done);
-            var floatSamples = new Float32Array(Module.HEAPU8.buffer, outPtr, done / 4 /* sizeof float */);
-            //console.log(floatSamples.length);
-
-            // convert to float32 samples
-            /*
-            var intSamples = new Int16Array(out)
-              , o = new ArrayBuffer(intSamples.length * 4)
-              , floatSamples = new Float32Array(o)
-              , f
-              , val
-
-            for (var i = 0; i < intSamples.length; i++) {
-              f = intSamples[i];
-              val = (f + 0.5) / 32767.5;
-              console.log(i, f, ' = ', val);
-              floatSamples[i] = val;
-            }
-            */
-            //console.log(floatSamples);
-
-            // copy values so that `outPtr` can be reused...
-            output.push(new Float32Array(floatSamples));
-            outputLength += floatSamples.length;
-            //audioHandle.writeAudio(floatSamples);
-
-            //var b = new Buffer(out);
-            //console.log(out);
-            //process.stdout.write(b);
-            //ws.write(b);
-
-          } else {
-            // fail
-            //assert(0, 'mpg123_read() failed: ' + r);
           }
-        }
 
-        free(bufPtr);
-        free(donePtr);
-        free(outPtr);
+          free(bufPtr);
+          free(donePtr);
+          free(outPtr);
 
-        // convert to a single Buffer :\ this is lame, Transform needs this.push()
-        var o = new Float32Array(outputLength);
-        var s = 0;
-        for (var i = 0; i < output.length; i++) {
-          var b = output[i];
-          for (var j = 0; j < b.length; j++) {
-            o[s++] = b[j];
+          // convert to a single Buffer :\ this is lame, Transform needs this.push()
+          var o = new Float32Array(outputLength);
+          var s = 0;
+          for (var i = 0; i < output.length; i++) {
+            var b = output[i];
+            for (var j = 0; j < b.length; j++) {
+              o[s++] = b[j];
+            }
           }
+          console.log('%d samples of float data!', o.length);
+          fn(null, o);
+        } else {
+          // got EOF
+          //close.call(this);
+          fn(null, null);
         }
-        console.log('%d samples of float data!', o.length);
-        fn(null, o);
       };
 
       //process.stdin.on('end', function(){
@@ -249,6 +238,7 @@
 
       function close () {
         //ws.end();
+        var mh = this.mh;
 
         // free the "handle" resources
         mpg123_delete(mh);
