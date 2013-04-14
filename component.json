@@ -5,10 +5,10 @@
   "version": "0.0.0",
   "keywords": [],
   "dependencies": {
+    "TooTallNate/cstreams-transform": "*"
   },
   "development": {
     "TooTallNate/cstreams": "*",
-    "TooTallNate/cstreams-transform": "*",
     "TooTallNate/speaker.js": "*"
   },
   "license": "MIT",
